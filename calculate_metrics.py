@@ -12,13 +12,14 @@ import pyiqa
 import lpips as lpips_test
 from pytorch_fid.fid_score import *
 from argparse import ArgumentParser
+import torch  # Make sure to import torch
 
 def psnr(img1, img2):
-   mse = np.mean( (img1/255. - img2/255.) ** 2 )
-   if mse < 1.0e-10:
-      return 100
-   PIXEL_MAX = 1
-   return 20 * math.log10(PIXEL_MAX / math.sqrt(mse))
+    mse = np.mean((img1 / 255. - img2 / 255.) ** 2)
+    if mse < 1.0e-10:
+        return 100
+    PIXEL_MAX = 1
+    return 20 * math.log10(PIXEL_MAX / math.sqrt(mse))
 
 def bgr2ycbcr(img, only_y=True):
     '''same as matlab rgb2ycbcr
@@ -28,7 +29,7 @@ def bgr2ycbcr(img, only_y=True):
         float, [0, 1]
     '''
     in_img_type = img.dtype
-    img.astype(np.float32)
+    img = img.astype(np.float32)  # Corrected this line
     if in_img_type != np.uint8:
         img *= 255.
     # convert
@@ -43,60 +44,66 @@ def bgr2ycbcr(img, only_y=True):
         rlt /= 255.
     return rlt.astype(in_img_type)
 
-parser=ArgumentParser()
-parser.add_argument('--result_dir', type=str, dest='result_dir', default='./datasets/FFHQ_Multi_iid/Res')
-parser.add_argument('--gt_dir', type=str, dest='gt_dir', default='./datasets/FFHQ_Multi_iid/GT')
-parser.add_argument('--fid_ref_dir', type=str, dest='fid_ref_dir', default='./datasets/FFHQ_Multi_iid/GT')
-args = parser.parse_args()
+def main():
+    parser = ArgumentParser()
+    parser.add_argument('--result_dir', type=str, dest='result_dir', default='.\FFHQ_iid\Res')
+    parser.add_argument('--gt_dir', type=str, dest='gt_dir', default='.\FFHQ_iid\GT')
+    parser.add_argument('--fid_ref_dir', type=str, dest='fid_ref_dir', default='.\FFHQ_iid\GT')
+    args = parser.parse_args()
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-with torch.no_grad():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    with torch.no_grad():
+        iqa_nqie = pyiqa.create_metric('niqe', device=device)
+        loss_fn_vgg = lpips_test.LPIPS(net='alex')
+        loss_fn_vgg.to(device)
 
-    iqa_nqie = pyiqa.create_metric('niqe', device=torch.device('cuda'))
-    loss_fn_vgg = lpips_test.LPIPS(net='alex')
-    loss_fn_vgg.to(device)
+        total_psnr = 0
+        total_lpips = 0
+        total_niqe = 0
 
-    total_psnr = 0
-    total_lpips = 0
-    total_niqe = 0
+        nums = len(glob(args.result_dir + '\\' + '*'))
+        for img_path in tqdm(sorted(glob(args.result_dir + '\\' + '*'))):
+            img_name = img_path.split('\\')[-1][:-4]  # Get the image name without the extension
 
-    nums = len(glob(args.result_dir+ '/' + '*'))
-    for img_path in tqdm(sorted(glob(args.result_dir+ '/' + '*'))):
-        
-        img_name = img_path.split('/')[-1][:-4]
+            img0p = imageio.imread(img_path)
+            gt_image_path = os.path.join(args.gt_dir, img_name + '.png')  # Construct path for GT image
 
-        img0p = imageio.imread(img_path) 
-        img1p = imageio.imread(os.path.join(args.gt_dir, img_name + '.png'))
+            try:
+                img1p = imageio.imread(gt_image_path)  # Try to read the ground truth image
+            except FileNotFoundError:
+                nums-=1
+                print(f"File not found: {gt_image_path}. Skipping this image.")
+                continue  # Skip to the next iteration if file is not found
 
-        img0l = lpips_test.im2tensor(lpips_test.load_image(img_path)) # RGB image from [-1,1]
-        img1l = lpips_test.im2tensor(lpips_test.load_image(os.path.join(args.gt_dir, img_name + '.png')))
+            img0l = lpips_test.im2tensor(lpips_test.load_image(img_path))  # RGB image from [-1,1]
+            img1l = lpips_test.im2tensor(lpips_test.load_image(gt_image_path))
 
-        img0l = img0l.to(device)
-        img1l = img1l.to(device)
+            img0l = img0l.to(device)
+            img1l = img1l.to(device)
 
-        #dist_psnr = psnr(img0p, img1p)
-        dist_psnr = psnr(bgr2ycbcr(img0p, only_y=True), bgr2ycbcr(img1p, only_y=True))
-        total_psnr = total_psnr + dist_psnr
+            dist_psnr = psnr(bgr2ycbcr(img0p, only_y=True), bgr2ycbcr(img1p, only_y=True))
+            total_psnr += dist_psnr
 
-        dist_lpips = loss_fn_vgg.forward(img0l, img1l)
-        total_lpips = total_lpips + dist_lpips.data[0][0][0][0].item()
+            dist_lpips = loss_fn_vgg.forward(img0l, img1l)
+            total_lpips += dist_lpips.data[0][0][0][0].item()
 
-        dist_niqe = iqa_nqie(img_path)
-        total_niqe = total_niqe + dist_niqe
+            dist_niqe = iqa_nqie(img_path)
+            total_niqe += dist_niqe
 
-    psnr_final = total_psnr / nums
-    lpips_final = total_lpips / nums
-    niqe_final = total_niqe / nums
+        psnr_final = total_psnr / nums
+        lpips_final = total_lpips / nums
+        niqe_final = total_niqe / nums
 
-    fid_final = calculate_fid_given_paths([args.result_dir, args.fid_ref_dir],
-                                    1,
-                                    device,
-                                    2048,
-                                    8)
+        fid_final = calculate_fid_given_paths([args.result_dir, args.fid_ref_dir],
+                                               1,
+                                               device,
+                                               2048,
+                                               8)
 
-    
-    print(psnr_final)
-    print(lpips_final)
-    print(fid_final)
-    print(niqe_final)
+        print(psnr_final)
+        print(lpips_final)
+        print(fid_final)
+        print(niqe_final)
 
+if __name__ == '__main__':
+    main()
