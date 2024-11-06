@@ -7,7 +7,7 @@ import os
 from glob import glob
 from tqdm import tqdm
 import imageio.v2 as imageio
-
+from SSL import ssl
 import pyiqa
 import lpips as lpips_test
 from pytorch_fid.fid_score import *
@@ -46,9 +46,9 @@ def bgr2ycbcr(img, only_y=True):
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('--result_dir', type=str, dest='result_dir', default='.\FFHQ_iid\Res')
-    parser.add_argument('--gt_dir', type=str, dest='gt_dir', default='.\FFHQ_iid\GT')
-    parser.add_argument('--fid_ref_dir', type=str, dest='fid_ref_dir', default='.\FFHQ_iid\GT')
+    parser.add_argument('--result_dir', type=str, dest='result_dir', default='./datasets/CelebA_iid/Res605')
+    parser.add_argument('--gt_dir', type=str, dest='gt_dir', default='./datasets/CelebA_iid/GT')
+    parser.add_argument('--fid_ref_dir', type=str, dest='fid_ref_dir', default='./datasets/CelebA_iid/GT')
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -60,13 +60,15 @@ def main():
         total_psnr = 0
         total_lpips = 0
         total_niqe = 0
+        # total_ssl = 0
+        nums = len(glob(args.result_dir + '/' + '*'))
 
-        nums = len(glob(args.result_dir + '\\' + '*'))
-        for img_path in tqdm(sorted(glob(args.result_dir + '\\' + '*'))):
-            img_name = img_path.split('\\')[-1][:-4]  # Get the image name without the extension
+        print(nums)
 
+        for img_path in tqdm(sorted(glob(args.result_dir + '/' + '*'))):
+            img_name = img_path.split('/')[-1][:-4]  # Get the image name without the extension
             img0p = imageio.imread(img_path)
-            gt_image_path = os.path.join(args.gt_dir, img_name + '.png')  # Construct path for GT image
+            gt_image_path = os.path.join(args.gt_dir, img_name + '.jpg')  # Construct path for GT image
 
             try:
                 img1p = imageio.imread(gt_image_path)  # Try to read the ground truth image
@@ -90,10 +92,13 @@ def main():
             dist_niqe = iqa_nqie(img_path)
             total_niqe += dist_niqe
 
+            # dist_ssl= ssl.ssl_loss_cal(img0l,img1l)
+            # total_ssl+= dist_ssl
+
         psnr_final = total_psnr / nums
         lpips_final = total_lpips / nums
         niqe_final = total_niqe / nums
-
+        # ssl_final= total_ssl/nums
         fid_final = calculate_fid_given_paths([args.result_dir, args.fid_ref_dir],
                                                1,
                                                device,
@@ -102,6 +107,7 @@ def main():
 
         print(psnr_final)
         print(lpips_final)
+        # print(ssl_final)
         print(fid_final)
         print(niqe_final)
 
